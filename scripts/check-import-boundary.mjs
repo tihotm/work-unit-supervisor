@@ -8,6 +8,7 @@ const coreDir = resolve(root, "src", "core");
 const portsDir = resolve(root, "src", "ports");
 const diffAuditorDir = resolve(root, "src", "diff-auditor");
 const infrastructureDir = resolve(root, "src", "infrastructure");
+const executorsDir = resolve(root, "src", "executors");
 const files = await readdir(root, { recursive: true });
 const sources = files.filter((file) => {
   if (!(file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.mjs') || file.endsWith('.json'))) return false;
@@ -46,8 +47,8 @@ for (const file of sources) {
         continue;
       }
       const target = resolve(sourceDir, specifier);
-      if (isInside(target, portsDir) || isInside(target, diffAuditorDir) || isInside(target, infrastructureDir)) {
-        throw new Error(`core must not import ports, diff auditor, or infrastructure: ${normalizedFile} -> ${specifier}`);
+      if (isInside(target, portsDir) || isInside(target, diffAuditorDir) || isInside(target, infrastructureDir) || isInside(target, executorsDir)) {
+        throw new Error(`core must not import ports, diff auditor, executors, or infrastructure: ${normalizedFile} -> ${specifier}`);
       }
     }
   }
@@ -74,6 +75,19 @@ for (const file of sources) {
       const allowed = isInside(target, coreDir) || isInside(target, diffAuditorDir);
       if (!allowed) {
         throw new Error(`diff auditor must only import core or local modules: ${normalizedFile} -> ${specifier}`);
+      }
+    }
+  }
+
+  if (normalizedFile.startsWith('src/executors/')) {
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        continue;
+      }
+      const target = resolve(sourceDir, specifier);
+      const allowed = isInside(target, coreDir) || isInside(target, executorsDir);
+      if (!allowed) {
+        throw new Error(`executors must only import core or local modules: ${normalizedFile} -> ${specifier}`);
       }
     }
   }
