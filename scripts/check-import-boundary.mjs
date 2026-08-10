@@ -6,6 +6,7 @@ const skipSegments = ['node_modules', 'dist', '.git', 'docs', 'tests', 'README.m
 const forbiddenTokens = ['bomprati', 'catalogo', 'catalog', 'manufacturer', 'vehicle', 'enrichment'];
 const coreDir = resolve(root, "src", "core");
 const portsDir = resolve(root, "src", "ports");
+const diffAuditorDir = resolve(root, "src", "diff-auditor");
 const files = await readdir(root, { recursive: true });
 const sources = files.filter((file) => {
   if (!(file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.mjs') || file.endsWith('.json'))) return false;
@@ -44,7 +45,7 @@ for (const file of sources) {
         continue;
       }
       const target = resolve(sourceDir, specifier);
-      if (isInside(target, portsDir)) {
+      if (isInside(target, portsDir) || isInside(target, diffAuditorDir)) {
         throw new Error(`core must not import ports: ${normalizedFile} -> ${specifier}`);
       }
     }
@@ -59,6 +60,19 @@ for (const file of sources) {
       const allowed = isInside(target, coreDir) || isInside(target, portsDir);
       if (!allowed) {
         throw new Error(`ports must only import core or local modules: ${normalizedFile} -> ${specifier}`);
+      }
+    }
+  }
+
+  if (normalizedFile.startsWith('src/diff-auditor/')) {
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        continue;
+      }
+      const target = resolve(sourceDir, specifier);
+      const allowed = isInside(target, coreDir) || isInside(target, diffAuditorDir);
+      if (!allowed) {
+        throw new Error(`diff auditor must only import core or local modules: ${normalizedFile} -> ${specifier}`);
       }
     }
   }
