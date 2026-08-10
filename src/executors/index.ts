@@ -13,3 +13,7 @@ export {
   type RuntimeBridgeSession,
   type RuntimeBridgeSucceededResult,
 } from "./runtime-bridge.js";
+export {
+  OpenHandsExecutorAdapter,
+  type OpenHandsExecutorAdapterOptions,
+} from "./openhands/openhands-executor-adapter.js";

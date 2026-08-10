@@ -8,6 +8,7 @@ const coreDir = resolve(root, "src", "core");
 const portsDir = resolve(root, "src", "ports");
 const diffAuditorDir = resolve(root, "src", "diff-auditor");
 const infrastructureDir = resolve(root, "src", "infrastructure");
+const workspaceInfrastructureDir = resolve(root, "src", "infrastructure", "workspace");
 const executorsDir = resolve(root, "src", "executors");
 const files = await readdir(root, { recursive: true });
 const sources = files.filter((file) => {
@@ -51,6 +52,25 @@ for (const file of sources) {
         throw new Error(`core must not import ports, diff auditor, executors, or infrastructure: ${normalizedFile} -> ${specifier}`);
       }
     }
+  }
+
+  if (normalizedFile.startsWith('src/executors/openhands/')) {
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        continue;
+      }
+      const target = resolve(sourceDir, specifier);
+      const allowed =
+        isInside(target, coreDir) ||
+        isInside(target, portsDir) ||
+        isInside(target, diffAuditorDir) ||
+        isInside(target, workspaceInfrastructureDir) ||
+        isInside(target, executorsDir);
+      if (!allowed) {
+        throw new Error(`openhands executors must only import core, ports, diff auditor, workspace infrastructure, or local modules: ${normalizedFile} -> ${specifier}`);
+      }
+    }
+    continue;
   }
 
   if (normalizedFile.startsWith('src/ports/')) {
