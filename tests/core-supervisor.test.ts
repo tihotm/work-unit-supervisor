@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { decideSupervisor, type SupervisorDecision, type SupervisorInput, type WorkUnit } from "../src/core/index.js";
+import {
+  decideSupervisor,
+  type SupervisorDecision,
+  type SupervisorEvidence,
+  type SupervisorInput,
+  type SupervisorReason,
+  type WorkUnit,
+} from "../src/core/index.js";
 
 const validWorkUnit: WorkUnit = {
   id: "unit-1",
@@ -26,6 +33,76 @@ function createInput(overrides: Partial<SupervisorInput> = {}): SupervisorInput 
 }
 
 describe("Core decision engine", () => {
+  it("expõe payloads fechados e sem details genérico", () => {
+    type ReasonHasDetails = "details" extends keyof SupervisorReason ? true : false;
+    type EvidenceHasDetails = "details" extends keyof SupervisorEvidence ? true : false;
+
+    const reasonHasDetails: ReasonHasDetails = false;
+    const evidenceHasDetails: EvidenceHasDetails = false;
+
+    const preconditionReason: Extract<
+      SupervisorReason,
+      { code: "PRECONDITION_NOT_SATISFIED" }
+    > = {
+      code: "PRECONDITION_NOT_SATISFIED",
+      category: "PRECONDITION",
+      message: "Pré-condição não satisfeita: db-ready",
+      preconditionId: "db-ready",
+    };
+
+    const capabilityReason: Extract<SupervisorReason, { code: "CAPABILITY_UNAVAILABLE" }> = {
+      code: "CAPABILITY_UNAVAILABLE",
+      category: "CAPABILITY",
+      message: "Capacidade necessária indisponível: EXECUTOR",
+      capability: "EXECUTOR",
+    };
+
+    const evidenceReason: Extract<SupervisorReason, { code: "REQUIRED_EVIDENCE_MISSING" }> = {
+      code: "REQUIRED_EVIDENCE_MISSING",
+      category: "EVIDENCE",
+      message: "Evidência obrigatória ausente: audit-report",
+      evidenceId: "audit-report",
+    };
+
+    const conflictReason: Extract<SupervisorReason, { code: "PATH_CONFLICT" }> = {
+      code: "PATH_CONFLICT",
+      category: "VALIDATION",
+      message: "Conflito entre allowedPaths e forbiddenPaths: src/core/**",
+      conflictingPaths: ["src/core/**"],
+    };
+
+    const preconditionEvidence: Extract<
+      SupervisorEvidence,
+      { code: "PRECONDITION_SATISFIED" }
+    > = {
+      code: "PRECONDITION_SATISFIED",
+      category: "PRECONDITION",
+      message: "Pré-condição satisfeita: db-ready",
+      source: "supervisor-core",
+      preconditionId: "db-ready",
+    };
+
+    const requiredEvidence: Extract<
+      SupervisorEvidence,
+      { code: "REQUIRED_EVIDENCE_PRESENT" }
+    > = {
+      code: "REQUIRED_EVIDENCE_PRESENT",
+      category: "EVIDENCE",
+      message: "Evidência obrigatória confirmada: audit-report",
+      source: "supervisor-core",
+      evidenceId: "audit-report",
+    };
+
+    void reasonHasDetails;
+    void evidenceHasDetails;
+    void preconditionReason;
+    void capabilityReason;
+    void evidenceReason;
+    void conflictReason;
+    void preconditionEvidence;
+    void requiredEvidence;
+  });
+
   it("produz READY determinístico quando tudo está válido", () => {
     const decision = decideSupervisor(createInput());
 

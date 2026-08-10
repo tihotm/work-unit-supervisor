@@ -7,20 +7,86 @@ export type SupervisorCategory =
   | "CAPABILITY"
   | "EVIDENCE";
 
-export type SupervisorReason = {
-  readonly code: string;
-  readonly category: SupervisorCategory;
-  readonly message: string;
-  readonly details?: Readonly<Record<string, unknown>>;
-};
+export type SupervisorReason =
+  | {
+      readonly code: "INVALID_WORK_UNIT_STRUCTURE";
+      readonly category: "VALIDATION";
+      readonly message: string;
+    }
+  | {
+      readonly code: "INVALID_WORK_UNIT_STATUS";
+      readonly category: "VALIDATION";
+      readonly message: string;
+    }
+  | {
+      readonly code: "UNAUTHORIZED";
+      readonly category: "AUTHORIZATION";
+      readonly message: string;
+    }
+  | {
+      readonly code: "PRECONDITION_NOT_SATISFIED";
+      readonly category: "PRECONDITION";
+      readonly message: string;
+      readonly preconditionId: string;
+    }
+  | {
+      readonly code: "CAPABILITY_UNAVAILABLE";
+      readonly category: "CAPABILITY";
+      readonly message: string;
+      readonly capability: string;
+    }
+  | {
+      readonly code: "REQUIRED_EVIDENCE_MISSING";
+      readonly category: "EVIDENCE";
+      readonly message: string;
+      readonly evidenceId: string;
+    }
+  | {
+      readonly code: "PATH_CONFLICT";
+      readonly category: "VALIDATION";
+      readonly message: string;
+      readonly conflictingPaths: readonly string[];
+    };
 
-export type SupervisorEvidence = {
-  readonly code: string;
-  readonly category: SupervisorCategory;
-  readonly message: string;
-  readonly source: string;
-  readonly details?: Readonly<Record<string, unknown>>;
-};
+export type SupervisorEvidence =
+  | {
+      readonly code: "WORK_UNIT_STRUCTURE_VALID";
+      readonly category: "VALIDATION";
+      readonly message: string;
+      readonly source: string;
+    }
+  | {
+      readonly code: "AUTHORIZED";
+      readonly category: "AUTHORIZATION";
+      readonly message: string;
+      readonly source: string;
+    }
+  | {
+      readonly code: "PRECONDITION_SATISFIED";
+      readonly category: "PRECONDITION";
+      readonly message: string;
+      readonly source: string;
+      readonly preconditionId: string;
+    }
+  | {
+      readonly code: "CAPABILITIES_CONFIRMED";
+      readonly category: "CAPABILITY";
+      readonly message: string;
+      readonly source: string;
+    }
+  | {
+      readonly code: "REQUIRED_EVIDENCE_PRESENT";
+      readonly category: "EVIDENCE";
+      readonly message: string;
+      readonly source: string;
+      readonly evidenceId: string;
+    }
+  | {
+      readonly code: "NO_INCONSISTENCIES";
+      readonly category: "VALIDATION";
+      readonly message: string;
+      readonly source: string;
+    };
 
 export type SupervisorPrecondition = {
   readonly id: string;
@@ -88,22 +154,25 @@ function sortEvidencesDeterministically(evidences: SupervisorEvidence[]): Superv
 }
 
 function cloneReason(reason: SupervisorReason): SupervisorReason {
-  return {
-    code: reason.code,
-    category: reason.category,
-    message: reason.message,
-    ...(reason.details !== undefined ? { details: structuredClone(reason.details) } : {}),
-  };
+  switch (reason.code) {
+    case "PRECONDITION_NOT_SATISFIED":
+      return { ...reason };
+    case "CAPABILITY_UNAVAILABLE":
+      return { ...reason };
+    case "REQUIRED_EVIDENCE_MISSING":
+      return { ...reason };
+    case "PATH_CONFLICT":
+      return {
+        ...reason,
+        conflictingPaths: [...reason.conflictingPaths],
+      };
+    default:
+      return { ...reason };
+  }
 }
 
 function cloneEvidence(evidence: SupervisorEvidence): SupervisorEvidence {
-  return {
-    code: evidence.code,
-    category: evidence.category,
-    message: evidence.message,
-    source: evidence.source,
-    ...(evidence.details !== undefined ? { details: structuredClone(evidence.details) } : {}),
-  };
+  return { ...evidence };
 }
 
 function cloneReasons(reasons: readonly SupervisorReason[]): SupervisorReason[] {
@@ -206,7 +275,7 @@ function evaluatePreconditions(
         code: "PRECONDITION_NOT_SATISFIED",
         category: "PRECONDITION",
         message: `Pré-condição não satisfeita: ${precondition.id}`,
-        details: { preconditionId: precondition.id },
+        preconditionId: precondition.id,
       });
       return false;
     }
@@ -216,7 +285,7 @@ function evaluatePreconditions(
       category: "PRECONDITION",
       message: `Pré-condição satisfeita: ${precondition.id}`,
       source: "supervisor-core",
-      details: { preconditionId: precondition.id },
+      preconditionId: precondition.id,
     });
   }
 
@@ -237,7 +306,7 @@ function evaluateCapabilities(
         code: "CAPABILITY_UNAVAILABLE",
         category: "CAPABILITY",
         message: `Capacidade necessária indisponível: ${capability}`,
-        details: { capability },
+        capability,
       });
       return false;
     }
@@ -268,7 +337,7 @@ function evaluateRequiredEvidences(
         code: "REQUIRED_EVIDENCE_MISSING",
         category: "EVIDENCE",
         message: `Evidência obrigatória ausente: ${required.id}`,
-        details: { evidenceId: required.id },
+        evidenceId: required.id,
       });
       return false;
     }
@@ -278,7 +347,7 @@ function evaluateRequiredEvidences(
       category: "EVIDENCE",
       message: `Evidência obrigatória confirmada: ${required.id}`,
       source: "supervisor-core",
-      details: { evidenceId: required.id },
+      evidenceId: required.id,
     });
   }
 
@@ -298,7 +367,7 @@ function detectScopeConflicts(
       code: "PATH_CONFLICT",
       category: "VALIDATION",
       message: `Conflito entre allowedPaths e forbiddenPaths: ${forbidden.join(", ")}`,
-      details: { conflictingPaths: forbidden },
+      conflictingPaths: [...forbidden],
     });
     return false;
   }

@@ -15,22 +15,19 @@ export type SupervisorResult = {
 };
 
 function cloneReason(reason: SupervisorReason): SupervisorReason {
-  return {
-    code: reason.code,
-    category: reason.category,
-    message: reason.message,
-    ...(reason.details !== undefined ? { details: structuredClone(reason.details) } : {}),
-  };
+  switch (reason.code) {
+    case "PATH_CONFLICT":
+      return {
+        ...reason,
+        conflictingPaths: [...reason.conflictingPaths],
+      };
+    default:
+      return { ...reason };
+  }
 }
 
 function cloneEvidence(evidence: SupervisorEvidence): SupervisorEvidence {
-  return {
-    code: evidence.code,
-    category: evidence.category,
-    message: evidence.message,
-    source: evidence.source,
-    ...(evidence.details !== undefined ? { details: structuredClone(evidence.details) } : {}),
-  };
+  return { ...evidence };
 }
 
 function cloneDecision(decision: SupervisorDecision): SupervisorDecision {

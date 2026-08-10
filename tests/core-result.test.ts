@@ -108,14 +108,46 @@ describe("Supervisor result model", () => {
     assert.notStrictEqual(result.decision, decision);
     assert.notStrictEqual(result.decision.reasons, decision.reasons);
     assert.notStrictEqual(result.decision.evidences, decision.evidences);
-    assert.notStrictEqual(result.decision.reasons[0], decision.reasons[0]);
-    assert.notStrictEqual(result.decision.evidences[0], decision.evidences[0]);
+    const resultReason = result.decision.reasons.find(
+      (reason): reason is Extract<typeof reason, { code: "PATH_CONFLICT" }> =>
+        reason.code === "PATH_CONFLICT"
+    );
+    const decisionReason = decision.reasons.find(
+      (reason): reason is Extract<typeof reason, { code: "PATH_CONFLICT" }> =>
+        reason.code === "PATH_CONFLICT"
+    );
 
-    const resultReason = result.decision.reasons[0];
-    if (resultReason && resultReason.details && "conflictingPaths" in resultReason.details) {
-      const conflictingPaths = resultReason.details.conflictingPaths as string[];
-      conflictingPaths.push("mutated");
-      assert.ok(!("mutated" in (decision.reasons[0]?.details as Record<string, unknown> | undefined ?? {})));
+    assert.ok(resultReason);
+    assert.ok(decisionReason);
+    assert.notStrictEqual(resultReason, decisionReason);
+    assert.notStrictEqual(resultReason.conflictingPaths, decisionReason.conflictingPaths);
+
+    (resultReason.conflictingPaths as string[]).push("mutated");
+    assert.deepEqual(decisionReason.conflictingPaths, ["src/core/**"]);
+  });
+
+  it("não expõe details genérico no resultado", () => {
+    const decision = decideSupervisor(
+      createInput({
+        workUnit: {
+          ...validWorkUnit,
+          scope: {
+            allowedPaths: ["src/core/**"],
+            forbiddenPaths: ["src/core/**"],
+          },
+        },
+      })
+    );
+    const result = buildSupervisorResult("exec-1", validWorkUnit, decision);
+
+    const conflictReason = result.decision.reasons.find(
+      (reason): reason is Extract<typeof reason, { code: "PATH_CONFLICT" }> =>
+        reason.code === "PATH_CONFLICT"
+    );
+
+    if (conflictReason) {
+      // @ts-expect-error details must not exist on public result reasons
+      conflictReason.details;
     }
   });
 
