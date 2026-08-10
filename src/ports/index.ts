@@ -1,4 +1,1 @@
-export interface PolicyDecision {
-  readonly allowed: boolean;
-  readonly reason: string;
-}
+export * from "./executor.js";
