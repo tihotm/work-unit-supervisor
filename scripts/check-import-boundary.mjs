@@ -7,6 +7,7 @@ const forbiddenTokens = ['bomprati', 'catalogo', 'catalog', 'manufacturer', 'veh
 const coreDir = resolve(root, "src", "core");
 const portsDir = resolve(root, "src", "ports");
 const diffAuditorDir = resolve(root, "src", "diff-auditor");
+const workflowDir = resolve(root, "src", "workflow");
 const infrastructureDir = resolve(root, "src", "infrastructure");
 const workspaceInfrastructureDir = resolve(root, "src", "infrastructure", "workspace");
 const executorsDir = resolve(root, "src", "executors");
@@ -95,6 +96,25 @@ for (const file of sources) {
       const allowed = isInside(target, coreDir) || isInside(target, diffAuditorDir);
       if (!allowed) {
         throw new Error(`diff auditor must only import core or local modules: ${normalizedFile} -> ${specifier}`);
+      }
+    }
+  }
+
+  if (normalizedFile.startsWith('src/workflow/')) {
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        continue;
+      }
+      const target = resolve(sourceDir, specifier);
+      const allowed =
+        isInside(target, coreDir) ||
+        isInside(target, portsDir) ||
+        isInside(target, diffAuditorDir) ||
+        isInside(target, infrastructureDir) ||
+        isInside(target, executorsDir) ||
+        isInside(target, workflowDir);
+      if (!allowed) {
+        throw new Error(`workflow must only import core, ports, diff auditor, infrastructure, executors, or local workflow modules: ${normalizedFile} -> ${specifier}`);
       }
     }
   }
