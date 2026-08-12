@@ -9,6 +9,7 @@ const portsDir = resolve(root, "src", "ports");
 const diffAuditorDir = resolve(root, "src", "diff-auditor");
 const workflowDir = resolve(root, "src", "workflow");
 const infrastructureDir = resolve(root, "src", "infrastructure");
+const gitInfrastructureDir = resolve(root, "src", "infrastructure", "git");
 const workspaceInfrastructureDir = resolve(root, "src", "infrastructure", "workspace");
 const executorsDir = resolve(root, "src", "executors");
 const files = await readdir(root, { recursive: true });
@@ -133,6 +134,20 @@ for (const file of sources) {
   }
 
   if (normalizedFile.startsWith('src/infrastructure/')) {
+    if (normalizedFile.startsWith('src/infrastructure/git/')) {
+      for (const specifier of specifiers) {
+        if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+          continue;
+        }
+        const target = resolve(sourceDir, specifier);
+        const allowed = isInside(target, workspaceInfrastructureDir) || isInside(target, gitInfrastructureDir);
+        if (!allowed) {
+          throw new Error(`git infrastructure must only import workspace infrastructure or local git modules: ${normalizedFile} -> ${specifier}`);
+        }
+      }
+      continue;
+    }
+
     for (const specifier of specifiers) {
       if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
         continue;
