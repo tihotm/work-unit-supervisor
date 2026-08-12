@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
     "lint": "node scripts/lint.mjs",
-    "test": "node --test dist/tests/smoke.test.js",
+    "test": "node --test dist/tests/*.js",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run import-boundary",
     "import-boundary": "node scripts/check-import-boundary.mjs"
   },

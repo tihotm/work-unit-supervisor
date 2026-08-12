@@ -471,7 +471,7 @@ describe("OpenHands executor adapter", () => {
 
     const result = await adapter.execute({
       ...createInput(),
-      limits: { timeoutMs: 100, maxCommands: 10, maxChangedFiles: 10 },
+      limits: { timeoutMs: 1_000, maxCommands: 10, maxChangedFiles: 10 },
     });
 
     assert.equal(result.status, "CANCELLED");
