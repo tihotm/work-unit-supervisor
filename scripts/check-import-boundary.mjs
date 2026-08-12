@@ -8,6 +8,7 @@ const coreDir = resolve(root, "src", "core");
 const portsDir = resolve(root, "src", "ports");
 const diffAuditorDir = resolve(root, "src", "diff-auditor");
 const workflowDir = resolve(root, "src", "workflow");
+const projectAdapterDir = resolve(root, "src", "project-adapter");
 const infrastructureDir = resolve(root, "src", "infrastructure");
 const gitInfrastructureDir = resolve(root, "src", "infrastructure", "git");
 const workspaceInfrastructureDir = resolve(root, "src", "infrastructure", "workspace");
@@ -111,11 +112,12 @@ for (const file of sources) {
         isInside(target, coreDir) ||
         isInside(target, portsDir) ||
         isInside(target, diffAuditorDir) ||
+        isInside(target, projectAdapterDir) ||
         isInside(target, infrastructureDir) ||
         isInside(target, executorsDir) ||
         isInside(target, workflowDir);
       if (!allowed) {
-        throw new Error(`workflow must only import core, ports, diff auditor, infrastructure, executors, or local workflow modules: ${normalizedFile} -> ${specifier}`);
+        throw new Error(`workflow must only import core, ports, diff auditor, project adapter, infrastructure, executors, or local workflow modules: ${normalizedFile} -> ${specifier}`);
       }
     }
   }

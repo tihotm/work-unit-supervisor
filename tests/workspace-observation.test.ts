@@ -118,20 +118,18 @@ describe("Workspace snapshotter", () => {
     await rm(baseDir, { recursive: true, force: true });
   });
 
-  it("falha se um arquivo desaparecer durante a captura", async () => {
+  it("omite arquivo removido antes da captura", async () => {
     const baseDir = await createTempDir("wus-snapshot-");
     const sandbox = await createWorkspaceSandbox({ baseDir, workspaceId: "job-file-toctou" });
     const disappearingFile = join(sandbox.workspaceDir, "z.txt");
 
-    await writeFile(join(sandbox.workspaceDir, "a.txt"), Buffer.alloc(16 * 1024 * 1024, 2));
+    await writeFile(join(sandbox.workspaceDir, "a.txt"), "stable");
     await writeFile(disappearingFile, "gone");
 
-    const capturePromise = captureWorkspaceSnapshot(sandbox.workspaceDir);
-    const captureAssertion = assert.rejects(capturePromise);
-    await new Promise((resolve) => setTimeout(resolve, 1));
     await rm(disappearingFile, { force: true });
+    const snapshot = await captureWorkspaceSnapshot(sandbox.workspaceDir);
 
-    await captureAssertion;
+    assert.deepEqual(snapshot, [{ relativePath: "a.txt", contentHash: fileHash("stable") }]);
 
     await sandbox.cleanup();
     await rm(baseDir, { recursive: true, force: true });
