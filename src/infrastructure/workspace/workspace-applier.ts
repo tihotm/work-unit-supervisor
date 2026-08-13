@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, copyFile, lstat, mkdir, realpath, rename, rm, rmdir } from "node:fs/promises";
+import { open, copyFile, lstat, mkdir, realpath, readdir, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { captureWorkspaceSnapshot, type WorkspaceSnapshot } from "./workspace-snapshotter.js";
@@ -15,7 +15,8 @@ export type WorkspaceApplyReasonCode =
   | "TARGET_LOCKED"
   | "SOURCE_DIVERGED"
   | "APPLY_FAILED"
-  | "ROLLBACK_FAILED";
+  | "ROLLBACK_FAILED"
+  | "RECOVERY_INCOMPLETE";
 
 export type WorkspaceApplyReason = {
   readonly code: WorkspaceApplyReasonCode;
@@ -91,6 +92,11 @@ type ApplyStep = {
   readonly createdDirectories: readonly string[];
 };
 
+type PreApplyTargetState = {
+  readonly mirrorRoot: string;
+  readonly directoryPaths: readonly string[];
+};
+
 const LOCK_NAMESPACE = join(tmpdir(), "work-unit-supervisor", "workspace-applier-locks");
 
 export const workspaceApplyRuntime = {
@@ -146,6 +152,114 @@ async function removeCreatedDirectories(createdDirectories: readonly string[]): 
   if (failure !== undefined) {
     throw failure;
   }
+}
+
+async function captureWorkspaceDirectories(rootDir: string): Promise<string[]> {
+  const rootCanonical = await resolveValidatedWorkspaceRoot(rootDir);
+  const directories: string[] = [];
+
+  async function walk(currentDir: string, relativeDir: string): Promise<void> {
+    const dirEntries = await readdir(currentDir, { withFileTypes: true });
+    dirEntries.sort((left, right) => compareStrings(left.name, right.name));
+
+    for (const entry of dirEntries) {
+      const absolutePath = join(currentDir, entry.name);
+      const entryStats = await lstat(absolutePath);
+      if (entryStats.isSymbolicLink()) {
+        throw new Error("INVALID_PATH");
+      }
+
+      if (entry.isDirectory()) {
+        const childRelativeDir = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+        directories.push(childRelativeDir);
+        await walk(absolutePath, childRelativeDir);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        throw new Error("INVALID_PATH");
+      }
+    }
+  }
+
+  await walk(rootCanonical, "");
+  return directories;
+}
+
+async function capturePreApplyTargetState(plan: WorkspaceApplyPlan, mirrorRoot: string): Promise<PreApplyTargetState> {
+  await mkdir(mirrorRoot, { recursive: true });
+  const directoryPaths = await captureWorkspaceDirectories(plan.targetWorkspaceDir);
+
+  for (const entry of plan.baseSnapshot) {
+    const sourcePath = await resolveSafeWorkspacePath(plan.targetWorkspaceDir, entry.relativePath);
+    const mirrorPath = resolve(mirrorRoot, entry.relativePath);
+    await mkdir(dirname(mirrorPath), { recursive: true });
+    await copyFile(sourcePath, mirrorPath);
+  }
+
+  return {
+    mirrorRoot,
+    directoryPaths,
+  };
+}
+
+async function restoreTargetFromMirror(plan: WorkspaceApplyPlan, preApplyTargetState: PreApplyTargetState): Promise<void> {
+  const basePaths = new Set(plan.baseSnapshot.map((entry) => entry.relativePath));
+  const currentSnapshot = await captureWorkspaceSnapshot(plan.targetWorkspaceDir);
+
+  for (const entry of currentSnapshot) {
+    if (basePaths.has(entry.relativePath)) {
+      continue;
+    }
+
+    const currentPath = await resolveSafeWorkspacePath(plan.targetWorkspaceDir, entry.relativePath);
+    await rm(currentPath, { force: true }).catch(() => undefined);
+  }
+
+  for (const entry of plan.baseSnapshot) {
+    const mirrorPath = resolve(preApplyTargetState.mirrorRoot, entry.relativePath);
+    const targetPath = resolve(plan.targetWorkspaceDir, entry.relativePath);
+    await mkdir(dirname(targetPath), { recursive: true });
+    const safeTargetPath = await assertWritableWorkspacePath(plan.targetWorkspaceDir, targetPath);
+    await copyFile(mirrorPath, safeTargetPath);
+  }
+
+  const currentDirectories = await captureWorkspaceDirectories(plan.targetWorkspaceDir);
+  const baseDirectoryPaths = new Set(preApplyTargetState.directoryPaths);
+  const extraDirectories = currentDirectories.filter((directoryPath) => !baseDirectoryPaths.has(directoryPath));
+  await removeCreatedDirectories(extraDirectories);
+}
+
+async function verifyRestoredTargetState(
+  plan: WorkspaceApplyPlan,
+  preApplyTargetState: PreApplyTargetState,
+): Promise<boolean> {
+  const restoredSnapshot = await captureWorkspaceSnapshot(plan.targetWorkspaceDir);
+  if (JSON.stringify(restoredSnapshot) !== JSON.stringify(plan.baseSnapshot)) {
+    return false;
+  }
+
+  const restoredDirectories = await captureWorkspaceDirectories(plan.targetWorkspaceDir);
+  const expectedDirectories = [...preApplyTargetState.directoryPaths].sort(compareStrings);
+  const sortedRestoredDirectories = [...restoredDirectories].sort(compareStrings);
+  return JSON.stringify(sortedRestoredDirectories) === JSON.stringify(expectedDirectories);
+}
+
+async function restoreTargetStateWithVerification(
+  plan: WorkspaceApplyPlan,
+  preApplyTargetState: PreApplyTargetState,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await restoreTargetFromMirror(plan, preApplyTargetState);
+    if (await verifyRestoredTargetState(plan, preApplyTargetState)) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (await verifyRestoredTargetState(plan, preApplyTargetState)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function buildReason(code: WorkspaceApplyReasonCode, message: string, path?: string): WorkspaceApplyReason {
@@ -669,6 +783,7 @@ export async function applyWorkspacePlan(plan: WorkspaceApplyPlan): Promise<Work
   const createdDirectories: string[] = [];
   let lock: WorkspaceApplyLock | undefined;
   let stagingRoot: string | undefined;
+  let preApplyTargetState: PreApplyTargetState | undefined;
 
   try {
     validatePlanShape(plan);
@@ -704,6 +819,7 @@ export async function applyWorkspacePlan(plan: WorkspaceApplyPlan): Promise<Work
 
     stagingRoot = await buildStagingRoot(plan);
     await mkdir(stagingRoot, { recursive: true });
+    preApplyTargetState = await capturePreApplyTargetState(plan, join(stagingRoot, "target-mirror"));
 
     for (const change of normalizedChanges) {
       const currentTargetSnapshot = await validateCurrentTargetBase(plan);
@@ -766,6 +882,33 @@ export async function applyWorkspacePlan(plan: WorkspaceApplyPlan): Promise<Work
     const failureReason = buildApplyFailureReason(error);
     try {
       await rollbackSteps(appliedSteps, createdDirectories);
+      if (preApplyTargetState) {
+        try {
+          const restored = await restoreTargetStateWithVerification(plan, preApplyTargetState);
+          if (!restored) {
+            return {
+              executionId: plan.executionId,
+              status: "FAILED",
+              reasons: [
+                failureReason,
+                buildReason("RECOVERY_INCOMPLETE", "O workspace alvo não pôde ser restaurado ao snapshot pré-apply."),
+              ],
+            };
+          }
+        } catch (recoveryError) {
+          return {
+            executionId: plan.executionId,
+            status: "FAILED",
+            reasons: [
+              failureReason,
+              buildReason(
+                "RECOVERY_INCOMPLETE",
+                recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+              ),
+            ],
+          };
+        }
+      }
     } catch (rollbackError) {
       return {
         executionId: plan.executionId,

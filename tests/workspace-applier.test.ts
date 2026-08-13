@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,6 +24,62 @@ async function cleanupWorkspace(baseDir: string, ...dirs: readonly string[]): Pr
     await fsPromises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
   await fsPromises.rm(baseDir, { recursive: true, force: true }).catch(() => undefined);
+}
+
+function compareStrings(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
+function captureWorkspaceState(rootDir: string) {
+  const entries: Array<
+    | { readonly path: string; readonly type: "dir" }
+    | { readonly path: string; readonly type: "file"; readonly size: number; readonly sha256: string }
+    | { readonly path: string; readonly type: "symlink" }
+    | { readonly path: string; readonly type: "other" }
+  > = [];
+
+  const walk = (currentDir: string, relativeDir = ""): void => {
+    const dirEntries = fs.readdirSync(currentDir, { withFileTypes: true });
+    dirEntries.sort((left, right) => compareStrings(left.name, right.name));
+
+    for (const entry of dirEntries) {
+      const absolutePath = join(currentDir, entry.name);
+      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        entries.push({ path: relativePath, type: "dir" });
+        walk(absolutePath, relativePath);
+        continue;
+      }
+
+      if (entry.isSymbolicLink()) {
+        entries.push({ path: relativePath, type: "symlink" });
+        continue;
+      }
+
+      if (entry.isFile()) {
+        const fileContent = fs.readFileSync(absolutePath);
+        entries.push({
+          path: relativePath,
+          type: "file",
+          size: fileContent.length,
+          sha256: createHash("sha256").update(fileContent).digest("hex"),
+        });
+        continue;
+      }
+
+      entries.push({ path: relativePath, type: "other" });
+    }
+  };
+
+  walk(rootDir);
+  return entries;
 }
 
 async function buildPlan(params: {
@@ -53,7 +111,7 @@ describe("Workspace applier", () => {
     const source = await createWorkspaceSandbox({ baseDir, workspaceId: "source-added" });
     const target = await createWorkspaceSandbox({ baseDir, workspaceId: "target-added" });
 
-    try {
+  try {
       await fsPromises.writeFile(join(source.workspaceDir, "added.txt"), "hello");
       const plan = await buildPlan({
         executionId: "exec-added",
@@ -318,6 +376,8 @@ describe("Workspace applier", () => {
     const baseDir = await createTempDir("wus-apply-");
     const source = await createWorkspaceSandbox({ baseDir, workspaceId: "source-rollback" });
     const target = await createWorkspaceSandbox({ baseDir, workspaceId: "target-rollback" });
+    const originalRmdir = workspaceApplyRuntime.rmdir;
+    let tamperedInjected = false;
 
     try {
       const updatedNested = Buffer.alloc(16 * 1024 * 1024, "a");
@@ -336,26 +396,78 @@ describe("Workspace applier", () => {
         allowedPaths: ["nested/a/b/file.txt", "z.txt"],
       });
 
-      const mutation = new Promise<void>((resolveMutation, rejectMutation) => {
-        setImmediate(async () => {
-          try {
-            await fsPromises.writeFile(join(target.workspaceDir, "tampered.txt"), "tampered");
-            resolveMutation();
-          } catch (error) {
-            rejectMutation(error);
-          }
-        });
-      });
+      (workspaceApplyRuntime as { rmdir: typeof originalRmdir }).rmdir = async (...args) => {
+        if (!tamperedInjected) {
+          tamperedInjected = true;
+          await fsPromises.writeFile(join(target.workspaceDir, "tampered.txt"), "tampered");
+        }
+        return originalRmdir(...args);
+      };
 
+      const snapshotBefore = captureWorkspaceState(target.workspaceDir);
       const result = await applyWorkspacePlan(plan);
-      await mutation;
+      const snapshotAfter = captureWorkspaceState(target.workspaceDir);
 
       assert.equal(result.status, "REJECTED");
       assert.equal(result.reasons[0]?.code, "BASE_DIVERGED");
-      assert.equal((await fsPromises.stat(join(target.workspaceDir, "nested"))).isDirectory(), true);
-      await assert.rejects(() => fsPromises.stat(join(target.workspaceDir, "nested", "a")));
-      await assert.rejects(() => fsPromises.stat(join(target.workspaceDir, "nested", "a", "b")));
-      await assert.rejects(() => fsPromises.readFile(join(target.workspaceDir, "nested", "a", "b", "file.txt"), "utf8"));
+      assert.deepEqual(snapshotAfter, snapshotBefore);
+      assert.equal(snapshotAfter.some((entry) => entry.path === "tampered.txt"), false);
+      assert.equal(snapshotAfter.some((entry) => entry.path === "nested/a/b/file.txt"), false);
+    } finally {
+      (workspaceApplyRuntime as { rmdir: typeof originalRmdir }).rmdir = originalRmdir;
+      await source.cleanup();
+      await target.cleanup();
+      await cleanupWorkspace(baseDir);
+    }
+  });
+
+  it("restaura arquivo deletado quando uma mudança posterior falha", async () => {
+    const baseDir = await createTempDir("wus-apply-");
+    const source = await createWorkspaceSandbox({ baseDir, workspaceId: "source-delete-rollback" });
+    const target = await createWorkspaceSandbox({ baseDir, workspaceId: "target-delete-rollback" });
+
+    try {
+      const largeContent = Buffer.alloc(16 * 1024 * 1024, "b");
+
+      await fsPromises.writeFile(join(target.workspaceDir, "gone.txt"), "before-gone");
+      await fsPromises.writeFile(join(target.workspaceDir, "z.txt"), "before-tail");
+      await fsPromises.writeFile(join(source.workspaceDir, "z.txt"), largeContent);
+
+      const plan = await buildPlan({
+        executionId: "exec-delete-rollback",
+        sourceWorkspaceDir: source.workspaceDir,
+        targetWorkspaceDir: target.workspaceDir,
+        allowedPaths: ["gone.txt", "z.txt"],
+      });
+
+      const deletedGone = new Promise<void>((resolveMutation, rejectMutation) => {
+        const poll = async (): Promise<void> => {
+          try {
+            const goneExists = await fsPromises.stat(join(target.workspaceDir, "gone.txt")).then(() => true, () => false);
+            if (!goneExists) {
+              await fsPromises.writeFile(join(target.workspaceDir, "tampered.txt"), "tampered");
+              resolveMutation();
+              return;
+            }
+            setTimeout(poll, 5);
+          } catch (error) {
+            rejectMutation(error);
+          }
+        };
+
+        setTimeout(poll, 0);
+      });
+
+      const snapshotBefore = captureWorkspaceState(target.workspaceDir);
+      const result = await applyWorkspacePlan(plan);
+      await deletedGone;
+      const snapshotAfter = captureWorkspaceState(target.workspaceDir);
+
+      assert.equal(result.status, "REJECTED");
+      assert.equal(result.reasons[0]?.code, "BASE_DIVERGED");
+      assert.deepEqual(snapshotAfter, snapshotBefore);
+      assert.equal(snapshotAfter.some((entry) => entry.path === "gone.txt"), true);
+      assert.equal(snapshotAfter.some((entry) => entry.path === "tampered.txt"), false);
     } finally {
       await source.cleanup();
       await target.cleanup();
@@ -415,6 +527,66 @@ describe("Workspace applier", () => {
       assert.equal(result.reasons[0]?.code, "BASE_DIVERGED");
       assert.equal(result.reasons[1]?.code, "ROLLBACK_FAILED");
     } finally {
+      (workspaceApplyRuntime as { rmdir: typeof originalRmdir }).rmdir = originalRmdir;
+      await source.cleanup();
+      await target.cleanup();
+      await cleanupWorkspace(baseDir);
+    }
+  });
+
+  it("retorna RECOVERY_INCOMPLETE quando a restauração não se estabiliza", async () => {
+    const baseDir = await createTempDir("wus-apply-");
+    const source = await createWorkspaceSandbox({ baseDir, workspaceId: "source-recovery-incomplete" });
+    const target = await createWorkspaceSandbox({ baseDir, workspaceId: "target-recovery-incomplete" });
+    const originalRmdir = workspaceApplyRuntime.rmdir;
+    const originalSetTimeout = globalThis.setTimeout;
+    let recoveryWindowObserved = false;
+
+    try {
+      const updatedNested = Buffer.alloc(16 * 1024 * 1024, "c");
+      const updatedTail = "after-tail";
+
+      await fsPromises.mkdir(join(target.workspaceDir, "nested"), { recursive: true });
+      await fsPromises.writeFile(join(target.workspaceDir, "z.txt"), "before-tail");
+      await fsPromises.mkdir(join(source.workspaceDir, "newdir"), { recursive: true });
+      await fsPromises.writeFile(join(source.workspaceDir, "newdir", "file.txt"), updatedNested);
+      await fsPromises.writeFile(join(source.workspaceDir, "z.txt"), updatedTail);
+
+      const plan = await buildPlan({
+        executionId: "exec-recovery-incomplete",
+        sourceWorkspaceDir: source.workspaceDir,
+        targetWorkspaceDir: target.workspaceDir,
+        allowedPaths: ["newdir/file.txt", "z.txt"],
+      });
+
+      (workspaceApplyRuntime as { rmdir: typeof originalRmdir }).rmdir = async (...args) => {
+        if (!recoveryWindowObserved) {
+          recoveryWindowObserved = true;
+          void fsPromises.writeFile(join(target.workspaceDir, "tampered.txt"), "tampered").catch(() => undefined);
+        }
+        return originalRmdir(...args);
+      };
+
+      (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 150) {
+          originalSetTimeout(() => {
+            void fsPromises.writeFile(join(target.workspaceDir, "tampered.txt"), "tampered").catch(() => undefined);
+          }, 25);
+        }
+
+        return originalSetTimeout(handler, timeout, ...args);
+      }) as typeof setTimeout;
+
+      const result = await applyWorkspacePlan(plan);
+
+      assert.equal(result.status, "FAILED");
+      assert.equal(result.reasons[0]?.code, "BASE_DIVERGED");
+      assert.equal(result.reasons[1]?.code, "RECOVERY_INCOMPLETE");
+
+      const lock = await acquireWorkspaceApplyLock(target.workspaceDir);
+      await lock.release();
+    } finally {
+      (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = originalSetTimeout;
       (workspaceApplyRuntime as { rmdir: typeof originalRmdir }).rmdir = originalRmdir;
       await source.cleanup();
       await target.cleanup();
