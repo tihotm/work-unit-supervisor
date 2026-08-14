@@ -3,6 +3,64 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./core": {
+      "types": "./dist/src/core/index.d.ts",
+      "import": "./dist/src/core/index.js"
+    },
+    "./ports": {
+      "types": "./dist/src/ports/index.d.ts",
+      "import": "./dist/src/ports/index.js"
+    },
+    "./policies": {
+      "types": "./dist/src/policies/index.d.ts",
+      "import": "./dist/src/policies/index.js"
+    },
+    "./executors": {
+      "types": "./dist/src/executors/index.d.ts",
+      "import": "./dist/src/executors/index.js"
+    },
+    "./project-adapter": {
+      "types": "./dist/src/project-adapter/index.d.ts",
+      "import": "./dist/src/project-adapter/index.js"
+    },
+    "./project-supervisor": {
+      "types": "./dist/src/project-supervisor/index.d.ts",
+      "import": "./dist/src/project-supervisor/index.js"
+    },
+    "./project-execution-entrypoint": {
+      "types": "./dist/src/project-execution-entrypoint/index.d.ts",
+      "import": "./dist/src/project-execution-entrypoint/index.js"
+    },
+    "./diff-auditor": {
+      "types": "./dist/src/diff-auditor/index.d.ts",
+      "import": "./dist/src/diff-auditor/index.js"
+    },
+    "./workflow": {
+      "types": "./dist/src/workflow/index.d.ts",
+      "import": "./dist/src/workflow/index.js"
+    },
+    "./workspace": {
+      "types": "./dist/src/infrastructure/workspace/index.d.ts",
+      "import": "./dist/src/infrastructure/workspace/index.js"
+    },
+    "./git": {
+      "types": "./dist/src/infrastructure/git/index.d.ts",
+      "import": "./dist/src/infrastructure/git/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=24.18.0"
   },
@@ -19,3 +77,4 @@
     "typescript": "^5.9.2"
   }
 }
+

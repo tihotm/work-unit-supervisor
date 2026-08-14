@@ -7,3 +7,4 @@ export * from './project-supervisor/index.js';
 export * from './project-execution-entrypoint/index.js';
 export * from './diff-auditor/index.js';
 export * from './workflow/index.js';
+export * from './infrastructure/git/index.js';
