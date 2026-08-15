@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { describe, it } from "node:test";
 import { createWorkspaceSandbox } from "../src/infrastructure/workspace/workspace-sandbox.js";
@@ -99,19 +100,48 @@ describe("Workspace snapshotter", () => {
     const baseDir = await createTempDir("wus-snapshot-");
     const sandbox = await createWorkspaceSandbox({ baseDir, workspaceId: "job-root-toctou" });
     const oldWorkspaceDir = `${sandbox.workspaceDir}-old`;
-    const replacementFile = join(sandbox.workspaceDir, "a.txt");
-    const trailingFile = join(sandbox.workspaceDir, "z.txt");
+    const require = createRequire(import.meta.url);
+    const mutableFsPromises = require("node:fs/promises") as typeof import("node:fs/promises") & {
+      readdir: typeof import("node:fs/promises").readdir;
+    };
+    const originalReaddir = mutableFsPromises.readdir;
+    let readdirCount = 0;
+    let releaseSecondReaddir: (() => void) | undefined;
+    let secondReaddirStarted: (() => void) | undefined;
+    const secondReaddirStartedPromise = new Promise<void>((resolve) => {
+      secondReaddirStarted = resolve;
+    });
+    const secondReaddirGate = new Promise<void>((resolve) => {
+      releaseSecondReaddir = resolve;
+    });
 
-    await writeFile(replacementFile, Buffer.alloc(16 * 1024 * 1024, 1));
-    await writeFile(trailingFile, "trailing");
+    mutableFsPromises.readdir = (async (...args: Parameters<typeof originalReaddir>) => {
+      readdirCount += 1;
+      if (readdirCount === 2) {
+        secondReaddirStarted?.();
+        await secondReaddirGate;
+      }
 
-    const capturePromise = captureWorkspaceSnapshot(sandbox.workspaceDir);
-    const captureAssertion = assert.rejects(capturePromise);
-    await new Promise((resolve) => setTimeout(resolve, 1));
-    await rename(sandbox.workspaceDir, oldWorkspaceDir);
-    await mkdir(sandbox.workspaceDir, { recursive: true });
+      return await originalReaddir(...args);
+    }) as typeof originalReaddir;
+    syncBuiltinESMExports();
 
-    await captureAssertion;
+    try {
+      await mkdir(join(sandbox.workspaceDir, "dir-000", "nested", "deep"), { recursive: true });
+      const freshSnapshotter = await import(`../src/infrastructure/workspace/workspace-snapshotter.js?toctou=${Date.now()}`);
+      const capturePromise = freshSnapshotter.captureWorkspaceSnapshot(sandbox.workspaceDir);
+
+      await secondReaddirStartedPromise;
+      await rename(sandbox.workspaceDir, oldWorkspaceDir);
+      await mkdir(sandbox.workspaceDir, { recursive: true });
+      releaseSecondReaddir?.();
+
+      await assert.rejects(capturePromise);
+    } finally {
+      mutableFsPromises.readdir = originalReaddir;
+      syncBuiltinESMExports();
+      releaseSecondReaddir?.();
+    }
 
     await rm(sandbox.workspaceDir, { recursive: true, force: true });
     await rm(oldWorkspaceDir, { recursive: true, force: true });
